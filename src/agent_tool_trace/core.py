@@ -30,6 +30,26 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-serialisable version of *value*.
+
+    Values that ``json.dumps`` accepts natively are returned unchanged.
+    Anything else (including non-serialisable items nested inside dicts or
+    lists) falls back to its ``repr`` so the result can always be encoded.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return repr(value)
+
+
 @dataclass
 class TraceStep:
     """A single recorded tool call.
@@ -84,34 +104,31 @@ class TraceStep:
             except Exception:
                 result_repr = "<unrepresentable>"
             outcome = result_repr
-        timing = (
-            f"  [{self.duration_ms:.1f}ms]" if self.duration_ms is not None else ""
-        )
+        timing = f"  [{self.duration_ms:.1f}ms]" if self.duration_ms is not None else ""
         return f"[{self.seq}] {call} -> {outcome}{timing}"
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serialisable dict representation."""
+        """Return a JSON-serialisable dict representation.
+
+        Values that are not natively JSON-serialisable (in ``result``,
+        ``args`` or ``metadata``) fall back to their ``repr`` so that the
+        resulting dict can always be passed to :func:`json.dumps`.
+        """
         error_info = None
         if self.error is not None:
             error_info = {
                 "type": type(self.error).__name__,
                 "message": str(self.error),
             }
-        result_val: Any
-        try:
-            json.dumps(self.result)
-            result_val = self.result
-        except (TypeError, ValueError):
-            result_val = repr(self.result)
 
         return {
             "seq": self.seq,
             "tool_name": self.tool_name,
-            "args": self.args,
-            "result": result_val,
+            "args": _json_safe(self.args),
+            "result": _json_safe(self.result),
             "error": error_info,
             "duration_ms": self.duration_ms,
-            "metadata": self.metadata,
+            "metadata": _json_safe(self.metadata),
         }
 
 
@@ -293,6 +310,4 @@ class ToolTrace:
         return len(self._steps)
 
     def __repr__(self) -> str:
-        return (
-            f"ToolTrace(calls={self.call_count()}, errors={self.error_count()})"
-        )
+        return f"ToolTrace(calls={self.call_count()}, errors={self.error_count()})"

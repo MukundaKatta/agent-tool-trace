@@ -379,6 +379,48 @@ def test_to_jsonl_empty():
     assert t.to_jsonl() == ""
 
 
+def test_to_dict_non_json_args():
+    class Custom:
+        def __repr__(self):
+            return "Custom()"
+
+    s = TraceStep(seq=1, tool_name="t", args={"obj": Custom(), "n": 5})
+    d = s.to_dict()
+    # Non-serialisable arg values fall back to repr; plain values are kept.
+    assert d["args"]["obj"] == "Custom()"
+    assert d["args"]["n"] == 5
+
+
+def test_to_dict_non_json_metadata():
+    class Custom:
+        def __repr__(self):
+            return "Custom()"
+
+    s = TraceStep(
+        seq=1,
+        tool_name="t",
+        metadata={"nested": {"obj": Custom()}, "items": [1, Custom()]},
+    )
+    d = s.to_dict()
+    assert d["metadata"]["nested"]["obj"] == "Custom()"
+    assert d["metadata"]["items"] == [1, "Custom()"]
+
+
+def test_to_jsonl_non_json_payload_is_parseable():
+    class Custom:
+        def __repr__(self):
+            return "Custom()"
+
+    t = ToolTrace()
+    t.record("t", {"obj": Custom()}, result=Custom(), metadata={"x": Custom()})
+    # to_jsonl must always produce valid JSON, even for unserialisable values.
+    parsed = [json.loads(line) for line in t.to_jsonl().splitlines()]
+    assert len(parsed) == 1
+    assert parsed[0]["args"]["obj"] == "Custom()"
+    assert parsed[0]["result"] == "Custom()"
+    assert parsed[0]["metadata"]["x"] == "Custom()"
+
+
 def test_to_dict_empty():
     t = ToolTrace()
     d = t.to_dict()
